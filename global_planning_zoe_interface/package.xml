@@ -22,9 +22,6 @@
   
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
-
-  <depend>launch</depend>
-  <depend>launch_ros</depend>
   
   <exec_depend>map_simulator</exec_depend>
   

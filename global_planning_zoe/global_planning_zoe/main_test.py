@@ -1,5 +1,7 @@
 """
-This node: get initial and goal position from rviz and publish a path
+This node: "DO PLANNING"
+
+it gets initial and goal position from rviz and publish a path
 
 publisher --> publish once (no freq included)
 
@@ -24,7 +26,7 @@ from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from tf2_ros import TransformBroadcaster, TransformStamped
 from map_simulator.srv import Spawn
-from global_planning_zoe_interface.srv import IntPose
+#from global_planning_zoe_interface.srv import IntPose
 
 class Globalplanning(Node):
     def __init__(self):
@@ -61,14 +63,6 @@ class Globalplanning(Node):
         self.timer = self.create_timer(timer_period, self.plan)
 
         self.broadcaster = TransformBroadcaster(self)
-    
-    def spawn_init_pose(self, request, response):
-        if request.pose == 1.0 :
-            self.get_logger().info("the pose {}".format(request.pose))
-            response.x = self.initial_positionx
-            response.y = self.initial_positiony
-            self.get_logger().info("Received initial position for service: ({}, {})".format(response.x, response.y))
-            return response
 
         
     def initial_position_callback(self,msg: PoseWithCovarianceStamped):
@@ -76,8 +70,6 @@ class Globalplanning(Node):
         initial_position = msg.pose.pose.position
         self.initial_positionx = initial_position.x
         self.initial_positiony = initial_position.y
-        # service
-        self.srv = self.create_service(IntPose, 'IntPose', self.spawn_init_pose)
         self.getin = True
         self.get_logger().info("Received initial position: ({}, {})".format(self.initial_positionx, self.initial_positiony))
 
@@ -93,33 +85,6 @@ class Globalplanning(Node):
     
     def plan(self):
         if self.getgoal & self.getin :
-            '''
-            ## publish odometry data
-            odom =  Odometry()
-            odom.header.frame_id = "r2d2/odom"
-            odom.child_frame_id = "r2d2/base_footprint"
-            now = self.get_clock().now()
-            odom.header.stamp = now.to_msg()
-            odom.pose.pose.position.x = self.initial_positionx
-            odom.pose.pose.position.y = self.initial_positiony
-            odom.pose.pose.position.z = 0.0 # Assuming no rotation
-
-            self.odom_publisher.publish(odom)
-            self.get_logger().info("Published dato to r2d2: ({}, {})".format(odom.pose.pose.position.x, odom.pose.pose.position.y))
-
-            
-            # Transformation
-            odom_trans = TransformStamped()
-            odom_trans.header.frame_id = 'r2d2/odom'
-            odom_trans.child_frame_id = 'r2d2/base_footprint'
-            odom_trans.transform.translation.x = self.initial_positionx
-            odom_trans.transform.translation.y = self.initial_positiony
-            odom_trans.transform.rotation.w = 1.0  # Assuming no rotation
-
-            self.broadcaster.sendTransform(odom_trans)
-            self.get_logger().info("Transform")
-            '''
-            
             #########
             source_node = ox.nearest_nodes(self.ecn_graph_proj, self.initial_positionx,self.initial_positiony) # set initial node
             target_node = ox.nearest_nodes(self.ecn_graph_proj,self.goal_positionx,self.goal_positiony) # set target node

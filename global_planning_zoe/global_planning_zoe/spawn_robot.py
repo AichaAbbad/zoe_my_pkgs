@@ -1,53 +1,90 @@
-'''
-this node is just a draft so far !
+"""
+Spawn robot from Rviz init pose !!!
 
-'''
+"""
 
-
-#!/usr/bin/env python3
+import sys
+import time
+from threading import Thread
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from map_simulator.srv import Spawn
 
 import rclpy
 from rclpy.node import Node
 
-import matplotlib.pyplot as plt
-import osmnx as ox   
-import networkx as nx
-import numpy as np 
-import logging
-from .lib.openstreetmap import Openstreetmap
-from .lib.astar import Astar
-from .lib.graph import Graph, Conversions
-
-from nav_msgs.msg import Path, Odometry
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
-from tf2_ros import TransformBroadcaster, TransformStamped
-from map_simulator.srv import Spawn
-
-from global_planning_zoe_interface.srv import IntPose 
-
-
-class Spawn_robot(Node):
+class Spawner(Node):
     def __init__(self):
         super().__init__("spawn_robot")
 
+        # Initialize initial and goal positions
         self.initial_positionx= 0.0
         self.initial_positiony= 0.0
+        self.getin = False
+
+        # spawn the robot in Rviz
+        self.srv = self.create_client(Spawn, '/simulator/spawn')
+        while not self.srv.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('spawn service not available, waiting again...') 
 
         # Subscribe to the initial position topic
         self.initial_subscriber = self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.initial_position_callback, 10)
 
-        # Subscribe to the path
-        self.path_subscriber = self.create_subscription(Path, 'path', self.path_callback, 10)
+    def send_request(self):
+        self.request = Spawn.Request()
+        self.request.robot_namespace = self.get_namespace()
+        self.request.x = self.x
+        self.request.y = self.y
+        self.request.theta =  0.0
+        self.request.radius = 0.4
 
-        # publisher
-        self.odom_publisher = self.create_publisher(Odometry, 'r2d2/odom', 50)
+        shape = self.declare_parameter('shape', 'rectangle')
+        if shape == 'square':
+            self.request.shape = self.request.SHAPE_SQUARE
+        elif shape == 'rectangle':
+            self.request.shape = self.request.SHAPE_RECTANGLE
+        else:
+            self.request.shape = self.request.SHAPE_CIRCLE
 
-        # service
-        self.spawn(self.declare_parameter("static_tf", False).value)
+        self.request.linear_noise = 0.0
+        self.request.angular_noise = 0.0
 
-        timer_period = 0.1  # 10hz
-        self.timer = self.create_timer(timer_period, self.pub_callback)
+        robot_color_param = self.declare_parameter('robot_color', [0, 0, 0])
+        robot_color = robot_color_param.value
+        if len(robot_color) != 3:
+            robot_color = [0, 0, 0]
+        self.request.robot_color = robot_color
 
+        laser_color_param = self.declare_parameter('laser_color', [255, 0, 0])
+        laser_color = laser_color_param.value
+        if len(laser_color) != 3:
+            laser_color = [255, 0, 0]
+        self.request.laser_color = laser_color
+
+        size_param= self.declare_parameter('size', [0, 0, 0])
+        size = size_param.value
+        if len(size) != 3 or not all(isinstance(s, float) for s in size):
+            size = [0.0, 0.0, 0.0]
+        self.request.size = size
+
+        self.request.force_scanner = False #self.declare_parameter('force_scanner', True)
+        self.request.static_tf_odom = True  # self.declare_parameter('static_tf_odom', False)
+        self.request.zero_joints = False #self.declare_parameter('zero_joints', False)
+
+        # send request
+        self.future = self.srv.call_async(self.request)
+        #rclpy.spin_until_future_complete(self, self.future)
+        #response = self.future.result()
+        #self.get_logger().info("successfully spawned robot in namespace %s" % self.request.robot_namespace)
+        self.future.add_done_callback(self.callback)
+            
+    def callback(self, future):
+        try:
+            response = future.result()
+            self.get_logger().info("successfully spawned robot in namespace %s" % self.request.robot_namespace)
+        except Exception as e:
+            self.get_logger().error('service call failed: %r' % (e,))
+
+        
     def initial_position_callback(self,msg: PoseWithCovarianceStamped):
         # Callback function to handle initial position updates
         initial_position = msg.pose.pose.position
@@ -56,40 +93,14 @@ class Spawn_robot(Node):
         self.getin = True
         self.get_logger().info("Received initial position: ({}, {})".format(self.initial_positionx, self.initial_positiony))
 
-    def spawn(self, static_tf):
-        """
-        robot = self.get_namespace().strip('/')
-
-        spawner = self.create_client(Spawn, '/simulator/spawn')
-        while not spawner.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('spawn service not available, waiting again...')
-
-        req = Spawn.Request()
-        req.robot_namespace = self.get_namespace()
-        
-        req.radius = self.radius
-        req.shape = req.SHAPE_CIRCLE
-        req.static_tf_odom = static_tf
-
-        self.future = spawner.call_async(req)
-        self.get_logger().info(f'spawned robot {robot} in map_simulator')
-         """
-    
-    def pub_callback(self):
-        ## publish odometry data
-            odom =  Odometry()
-            odom.header.frame_id = "r2d2/odom"
-            odom.child_frame_id = "r2d2/base_footprint"
-            now = self.get_clock().now()
-            odom.header.stamp = now.to_msg()
-            odom.pose.pose.position.x = self.initial_positionx
-            odom.pose.pose.position.y = self.initial_positiony
-            odom.pose.pose.position.z = 0.0 # Assuming no rotation
-
-            self.odom_publisher.publish(odom)
-            self.get_logger().info("Published dato to r2d2: ({}, {})".format(odom.pose.pose.position.x, odom.pose.pose.position.y))
-
-
+    def set_init(self):
+        #if self.getin:
+        self.x = self.initial_positionx
+        self.y = self.initial_positiony
+        self.get_logger().info("Received position: ({}, {})".format(self.x, self.y))
+        self.send_request()
+        #else:
+            #self.get_logger().warn("Initial position not received yet. Unable to set_init.")
 
 
 
@@ -97,14 +108,21 @@ class Spawn_robot(Node):
 def main(args=None):
     rclpy.init(args=args)
 
+    time.sleep(1)
+
     # Create node for simulation
-    spawn_robot = Spawn_robot()
-    
+    spawn = Spawner()
+
+    spin_thread = Thread(target=rclpy.spin, args=(spawn,))
+    spin_thread.start()
+
+    spawn.set_init()
+
     # Spin indefinitely..
-    rclpy.spin(spawn_robot)
+    #rclpy.spin(spawn)
 
     # On shutdown...
-    spawn_robot.destroy_node()
+    spawn.destroy_node()
     rclpy.shutdown()
     
 
